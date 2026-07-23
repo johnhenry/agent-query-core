@@ -17,7 +17,9 @@ conventions, interaction types, transports).
   a2aq/acpq usage).
 - **[docs/api.md](./docs/api.md)** — every export, one example each.
 - **[examples/](./examples)** — graded runnable demos, no network:
-  `npx tsx examples/01-cache-basics.ts` (or `npm run example:01` … `example:06`).
+  `npx tsx examples/01-cache-basics.ts` (or `npm run example:01` … `example:08`) —
+  including [07-connection-status](./examples/07-connection-status.ts) and
+  [08-retry-policy](./examples/08-retry-policy.ts).
 
 ## What's inside
 
@@ -36,8 +38,15 @@ conventions, interaction types, transports).
 - **`MemoryCacheStore` / `CacheStore`** — the async L2 tier interface
   (cross-instance sharing + distributed invalidation).
 - **`persistCache`** — offline/restore via any synchronous storage.
+- **`StatusStore`** — per-peer connectivity as a versioned reactive store
+  (gRPC channel-state model: idle/connecting/ready/degraded/closed).
+- **`withRetry`** — exponential backoff with full jitter and an explicit
+  idempotency assertion (no silent retry of non-idempotent calls).
+- **Refetch triggers** — `focusTrigger` / `onlineTrigger` / `intervalTrigger` +
+  `wireRevalidation` (mark-stale-on-occasion, TanStack style).
 - **`@johnhenry/agent-query-core/react`** — `useCacheEntry`, `useInteractions`,
-  `useAuditLog`, `useVersioned` (thin `useSyncExternalStore` bindings).
+  `useAuditLog`, `useVersioned`, `usePeerStatus` (thin `useSyncExternalStore`
+  bindings) and the `<AgentQueryDevtools>` panel.
 
 ## Family
 

@@ -63,7 +63,9 @@ inline keys never churn subscriptions). **Optimistic updates** (`patch`) apply a
 recipe and hand back a rollback; patching a key with no real data creates a
 provisional entry (status stays `"idle"` — a patch never claims server truth), and
 rolling back removes such ghosts wholesale, unless a real write landed in between, in
-which case rollback yields to the fresher data. **Dehydrate/hydrate** round-trips
+which case rollback yields to the fresher data (see
+[Optimistic flag semantics](#optimistic-flag-semantics) for the `isOptimistic`
+marker that rides along). **Dehydrate/hydrate** round-trips
 successful entries *with their original age*, so a restored snapshot's staleness math
 still holds — and hydrate installs the preserved age before notifying subscribers.
 
@@ -129,6 +131,111 @@ debounce-save on change, best-effort (a full or unavailable storage never crashe
 app; the debounce timer is `unref`'d). `CacheStore` / `MemoryCacheStore` define the
 async L2 tier behind the synchronous L1 — cross-instance sharing and distributed tag
 invalidation for multi-node backends; the hot read path (hooks) never touches L2.
+
+## Connectivity model
+
+`StatusStore` adopts gRPC's channel connectivity state machine — the one piece of
+connection UX gRPC got right enough that everyone copies it: a channel is always in
+exactly one of IDLE / CONNECTING / READY / TRANSIENT_FAILURE / SHUTDOWN, and clients
+watch *transitions*, not pings. Ours renames TRANSIENT_FAILURE to `"degraded"`
+(unhealthy, connection layer still retrying) and SHUTDOWN to `"closed"` (terminal):
+`idle | connecting | ready | degraded | closed`. Per state the store carries the
+things a reconnection UI actually renders: `since` (stamped on state change only, so
+"degraded for 40s" is answerable), `attempt` (consecutive tries, reset by reaching
+`ready`), `lastError`, and `retryAt` ("retrying in 3s…").
+
+Deliberately *not* a cache: peer status has no staleness, no gc, no tags — it is
+always current truth about the connection layer, so it lives in a plain versioned
+store (the broker's reactive pattern) that hooks observe via
+`subscribe`/`getVersion`. Adapters own the transitions; the core owns the bookkeeping.
+
+## Retry & idempotency contract
+
+`withRetry` merges two industry lessons. From gRPC service config: retry policy is
+*data* — `{ retries, baseDelayMs, maxDelayMs, factor, jitter, retryOn }` — declared
+once, applied uniformly, with exponential backoff and full jitter
+(`delay = random() * min(max, base * factor^attempt)`).
+
+From Stripe's Idempotency-Key header: **retrying is a property the caller must
+assert, never one the machinery may assume.** A retried mutation the peer already
+processed is a duplicate side effect — double-send, double-charge, double-spawn.
+Stripe's API refuses to make retries safe *for* you; it gives you a key mechanism
+and makes you use it. `withRetry` does the same with `opts.idempotent`: anything but
+exactly `true` means the first failure rethrows immediately. The canonical way to
+earn the assertion is reusing the same message/request id on every attempt so the
+peer can dedupe (`fn` receives the attempt number precisely so it *doesn't* need to
+regenerate ids). Reads are naturally idempotent; mutations need the mechanism.
+
+Backoff timers are `unref`'d (the same never-hold-the-process-open guard as the
+cache gc timer), and an `AbortSignal` interrupts a pending delay promptly with the
+abort reason — a cancelled agent call should not linger through a 30s backoff.
+
+## Optimistic flag semantics
+
+`CacheEntry.isOptimistic` is Firestore's `hasPendingWrites` transplanted: a boolean
+that says "what you are rendering includes a local mutation the server has not
+confirmed." `patch()` sets it; the next `write()` (server truth) or a rollback
+clears it. Rules worth stating precisely:
+
+- **Boolean, not a counter.** Overlapping patches share the flag; rolling back one
+  patch restores the flag as it stood when *that* patch was applied, so an outer
+  still-pending patch keeps it true.
+- **The transition emits, always.** A confirming write whose bytes deep-equal the
+  optimistic value would normally be silent under structural sharing — but the
+  flag flip is observable state, so it bumps the version. No silent flag changes.
+- **Never persisted.** `dehydrate` only captures server-confirmed entries, and a
+  restored process has no pending mutation to confirm — `hydrate` always lands
+  entries with `isOptimistic: false` (emitting if that clears a live flag).
+- Ghost entries (patch-created, no prior data) die wholesale on rollback; the flag
+  dies with them. A superseding write wins and has already cleared it.
+
+## Triggers
+
+TanStack Query's structural insight: staleness is a *predicate*, refetching needs an
+*occasion*. The core keeps them separate — `isStale` answers "should I refetch?",
+and a `Trigger` supplies "now would be a good time": window refocus
+(`focusTrigger`), network restoration (`onlineTrigger`), or a polling interval
+(`intervalTrigger(ms)`, unref'd). A trigger is just
+`(fire: () => void) => unsubscribe` — an adapter can wrap a protocol push, a
+webhook, or a message bus in four lines.
+
+`wireRevalidation(cache, trigger, opts?)` is the composition: on fire, mark the
+matching entries stale by key (`invalidateKeys` — `invalidateTags` semantics without
+the tag index or the L2 broadcast, since keys are local vocabulary) and let
+`events.onInvalidate` drive the adapter's refetch machinery. The default filter is
+`subscribers > 0` — revalidate only what someone is watching; a supplied predicate
+*replaces* that filter entirely rather than composing with it, so callers can
+deliberately include unobserved entries.
+
+## The devtools panel
+
+`<AgentQueryDevtools>` (in `/react`) is the adoption lever: one drop-in component
+that makes the invisible machinery visible — the hub's event timeline (newest first,
+filterable by type), the cache table (key, status, stale, optimistic, subscribers,
+age), the broker's pending interactions, and peer-status chips colored by
+connectivity state. Zero dependencies, inline styles only, collapsible, fixed
+bottom-right. `DevtoolsHub.getVersion()` exists so the panel (and any custom panel)
+can bind with the same `useVersioned` pattern as every other store; the cache-wide
+re-render rides `subscribeAll`, the global listener the persister already uses.
+
+## Family rules
+
+Cross-cutting contracts every `*-query` adapter must honor.
+
+**Reconcile on stream resume.** The Kubernetes informer's ListAndWatch lesson: a
+watch stream is an *optimization over* periodic relisting, never a replacement for
+it. After any stream/subscription resume — reconnect, redeliver, wake-from-sleep —
+the adapter MUST do a full read of the affected resources and reconcile the cache
+against it. Never assume the gap was empty: the events you didn't receive are
+exactly the ones you can't know about. Per-adapter reality:
+
+- **mcpq** — relists: on reconnect it re-reads subscribed resources, so the cache
+  reconverges to server truth.
+- **a2aq** — polls, so it trivially reconciles: the next poll *is* the full read.
+- **acpq** — has no replay: ACP session streams cannot be resumed with history, so
+  a reconnect leaves session state gappy. Recovery is a fresh session or a
+  re-prompt — the adapter must surface that honestly (mark the session degraded)
+  rather than pretend the stream continued.
 
 ## How adapters bind — real usage
 

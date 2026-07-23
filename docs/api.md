@@ -12,6 +12,9 @@ A complete catalog of the public surface. Conceptual background lives in
 - [`DevtoolsHub<TEvent>`](#devtoolshubtevent)
 - [`MemoryCacheStore` / `CacheStore`](#memorycachestore--cachestore)
 - [`persistCache`](#persistcache)
+- [`StatusStore`](#statusstore)
+- [`withRetry`](#withretry)
+- [Refetch triggers](#refetch-triggers)
 - [React bindings (`/react`)](#react-bindings-react)
 
 ---
@@ -71,6 +74,8 @@ fires `events.onUnsubscribe` and arms the gc timer. Unsubscribe fns are idempote
 ```ts
 cache.invalidateTags(["task:agentA:42"]);        // mark carriers stale + broadcast
 cache.invalidateTags(["task:agentA:42"], false); // protocol-driven: stale locally, no re-broadcast
+cache.invalidateKeys([keyA, keyB]);              // by structured key: stale + emit + onInvalidate,
+                                                 // no tag index, no distributed broadcast
 ```
 
 ### Optimistic updates
@@ -82,6 +87,18 @@ try {
 } catch {
   rollback(); // restores prior data; removes entries that only existed for the patch
 }
+```
+
+Every patched entry carries `isOptimistic: true` (Firestore's `hasPendingWrites`
+idea) until the next server-confirmed `write()` or a rollback clears it — a
+*boolean*, not a counter, so overlapping patches share the flag. A confirming write
+whose data equals the optimistic value still emits (the flag transition is
+observable). Optimistic state never persists: `hydrate` always lands entries with
+`isOptimistic: false`.
+
+```tsx
+const entry = useCacheEntry(cache, key);
+return <span style={{ opacity: entry?.isOptimistic ? 0.5 : 1 }}>{render(entry?.data)}</span>;
 ```
 
 ### Eviction
@@ -244,6 +261,7 @@ const hub = new DevtoolsHub<{ type: string; detail?: unknown }>(1000); // capaci
 hub.emit({ type: "cache:write", detail: { key } });
 hub.events();          // readonly TEvent[] — oldest dropped past capacity
 hub.subscribe(fn);     // notified per emit; returns unsubscribe
+hub.getVersion();      // monotonic, bumped per emit — pairs with useVersioned in panels
 ```
 
 ## `MemoryCacheStore` / `CacheStore`
@@ -280,6 +298,85 @@ const stop = persistCache(cache, localStorage, { key: "my-app-cache", debounce: 
 stop();
 ```
 
+## `StatusStore`
+
+Per-peer connectivity as a versioned reactive store — the gRPC channel-state model
+(`idle | connecting | ready | degraded | closed`), no cache semantics. `since` is
+stamped on state *change* only; `attempt` resets to 0 on any transition into
+`"ready"`; other fields merge (pass `undefined` explicitly to clear).
+
+```ts
+import { StatusStore } from "@johnhenry/agent-query-core";
+
+const status = new StatusStore(/* { now?: () => number } */);
+status.set("mcp:files", { state: "connecting", attempt: 1 });
+status.set("mcp:files", { state: "degraded", attempt: 2, lastError: err, retryAt: Date.now() + 400 });
+status.set("mcp:files", { state: "ready" });     // attempt → 0
+status.get("mcp:files");                          // PeerStatus | undefined
+status.list();                                    // Array<[peer, PeerStatus]>
+const un = status.subscribe(() => render());      // bumped version per set/remove
+status.getVersion();
+status.remove("mcp:files");
+```
+
+## `withRetry`
+
+Exponential backoff with full jitter and an *explicit idempotency contract*
+(Stripe's idempotency-key lesson): unless the caller passes `idempotent: true`,
+the first failure rethrows immediately — no retries. Make the call idempotent
+first (canonically: reuse the same message/request id on every attempt so the
+peer dedupes), then assert it. Backoff timers are unref'd; an `AbortSignal`
+rejects promptly mid-delay with the abort reason.
+
+```ts
+import { withRetry } from "@johnhenry/agent-query-core";
+
+const result = await withRetry(
+  (attempt) => sendMessage({ id: "msg-42", body }),   // same id every attempt
+  {
+    retries: 3,           // after the initial attempt
+    baseDelayMs: 200,     // default 200
+    maxDelayMs: 30_000,   // default 30_000
+    factor: 2,            // default 2
+    jitter: true,         // default: full jitter — delay = random() * min(max, base*factor^n)
+    retryOn: (err) => isTransient(err),  // false ⇒ rethrow; default always-true
+    // random?: () => number             — injectable for deterministic tests
+  },
+  {
+    idempotent: true,     // REQUIRED assertion — false/omitted ⇒ no retries, ever
+    signal: ac.signal,
+    onRetry: (err, attempt, delayMs) => log(`attempt ${attempt} failed; backing off ${delayMs}ms`),
+  },
+);
+```
+
+## Refetch triggers
+
+TanStack's lesson: staleness needs *occasions*. A `Trigger` subscribes a `fire`
+callback to an occasion source and returns an unsubscriber; `wireRevalidation`
+turns each fire into "mark matching entries stale + fire `events.onInvalidate`"
+via `cache.invalidateKeys`.
+
+```ts
+import { focusTrigger, onlineTrigger, intervalTrigger, wireRevalidation } from "@johnhenry/agent-query-core";
+
+// Built-ins: window refocus / visibility, back-online, unref'd polling interval.
+const stopFocus = wireRevalidation(cache, focusTrigger);
+const stopOnline = wireRevalidation(cache, onlineTrigger);
+const stopPoll = wireRevalidation(cache, intervalTrigger(30_000));
+
+// Default filter: entries with subscribers > 0 (only data someone is watching).
+// A predicate REPLACES that filter entirely (it can include unobserved entries):
+const stopTasks = wireRevalidation(cache, intervalTrigger(5_000), {
+  predicate: (e) => (e.cacheKey as A2AKey).kind === "task",
+});
+
+stopFocus(); // each returns the trigger's unsubscriber
+```
+
+`focusTrigger`/`onlineTrigger` are no-ops (with no-op unsubscribers) outside a DOM.
+A custom trigger is just a function: `const t: Trigger = (fire) => bus.on("wake", fire);`.
+
 ## React bindings (`/react`)
 
 Thin `useSyncExternalStore` helpers; adapters build protocol hooks (`useTask`,
@@ -311,6 +408,36 @@ function AuditPanel() {
 
 // Bind anything with subscribe/getVersion (e.g. a DevtoolsHub adapter):
 const version = useVersioned(subscribe, getVersion /*, getServerVersion = () => 0 */);
+```
+
+### `usePeerStatus`
+
+```tsx
+import { usePeerStatus } from "@johnhenry/agent-query-core/react";
+
+function PeerBadge({ peer }: { peer: string }) {
+  const s = usePeerStatus(statusStore, peer); // PeerStatus | undefined
+  return <span className={s?.state ?? "unknown"}>{peer}: {s?.state ?? "—"}</span>;
+}
+
+function PeerList() {
+  const all = usePeerStatus(statusStore); // peer omitted → Array<[name, PeerStatus]>
+  return <ul>{all.map(([name, s]) => <li key={name}>{name} · {s.state}</li>)}</ul>;
+}
+```
+
+### `<AgentQueryDevtools>`
+
+Zero-dependency, inline-styled floating panel (dark, monospace, fixed bottom-right,
+collapsible): event timeline with a type filter, cache entry table (key, status,
+stale, optimistic, subscribers, age), pending interactions, and peer-status chips.
+Every store except the hub is optional.
+
+```tsx
+import { AgentQueryDevtools } from "@johnhenry/agent-query-core/react";
+
+<AgentQueryDevtools hub={hub} cache={cache} broker={broker} status={statusStore}
+                    title="mcpq" defaultOpen />
 ```
 
 SSR note: server snapshots are the constant `0`, so server-rendered output is
