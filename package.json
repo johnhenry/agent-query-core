@@ -1,0 +1,42 @@
+{
+  "name": "@johnhenry/agent-query-core",
+  "version": "0.1.0",
+  "description": "The protocol-agnostic engine behind the *-query agent data layers: reactive cache, human-in-the-loop broker, interceptors, devtools.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/johnhenry/agent-query-core.git"
+  },
+  "homepage": "https://github.com/johnhenry/agent-query-core",
+  "bugs": "https://github.com/johnhenry/agent-query-core/issues",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./react": { "types": "./dist/react/index.d.ts", "default": "./dist/react/index.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@vitest/coverage-v8": "^4.1.9",
+    "react": "^19.2.7",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}
