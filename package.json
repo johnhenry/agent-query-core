@@ -33,7 +33,13 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "example:01": "tsx examples/01-cache-basics.ts",
+    "example:02": "tsx examples/02-tags-and-invalidation.ts",
+    "example:03": "tsx examples/03-optimistic-updates.ts",
+    "example:04": "tsx examples/04-approval-broker.ts",
+    "example:05": "tsx examples/05-interceptors.ts",
+    "example:06": "tsx examples/06-persistence.ts"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0"
@@ -44,9 +50,13 @@
     }
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.17",
     "@vitest/coverage-v8": "^4.1.9",
+    "happy-dom": "^20.11.1",
     "react": "^19.2.7",
+    "react-dom": "^19.2.8",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.9"
   }

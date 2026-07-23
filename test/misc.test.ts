@@ -113,3 +113,196 @@ describe("DevtoolsHub", () => {
     expect(ping).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("persistCache resilience", () => {
+  const serializeKey = (k: string) => k;
+
+  it("a throwing setItem never crashes the app (best-effort persistence)", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage: SyncStorage = {
+        getItem: () => null,
+        setItem: () => {
+          throw new Error("QuotaExceededError");
+        },
+      };
+      const cache = new QueryCache<string>({ serializeKey });
+      const stop = persistCache(cache, storage);
+      cache.write("k", "v");
+      await expect(vi.advanceTimersByTimeAsync(300)).resolves.not.toThrow();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a throwing getItem is swallowed at startup", () => {
+    const storage: SyncStorage = {
+      getItem: () => {
+        throw new Error("SecurityError");
+      },
+      setItem: () => {},
+    };
+    const cache = new QueryCache<string>({ serializeKey });
+    expect(() => persistCache(cache, storage)).not.toThrow();
+  });
+
+  it("a corrupt snapshot is ignored", () => {
+    const storage: SyncStorage = { getItem: () => "{not json", setItem: () => {} };
+    const cache = new QueryCache<string>({ serializeKey });
+    expect(() => persistCache(cache, storage)).not.toThrow();
+    expect(cache.entriesForDevtools()).toHaveLength(0);
+  });
+
+  it("stop() cancels a pending debounce AND detaches from future writes", async () => {
+    vi.useFakeTimers();
+    try {
+      const setItem = vi.fn();
+      const storage: SyncStorage = { getItem: () => null, setItem };
+      const cache = new QueryCache<string>({ serializeKey });
+      const stop = persistCache(cache, storage);
+      cache.write("k", "v"); // debounce armed…
+      stop(); // …but stopped before flush
+      await vi.advanceTimersByTimeAsync(500);
+      expect(setItem).not.toHaveBeenCalled();
+      cache.write("k2", "v2"); // post-stop writes never re-arm
+      await vi.advanceTimersByTimeAsync(500);
+      expect(setItem).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rapid writes collapse into one debounced save", async () => {
+    vi.useFakeTimers();
+    try {
+      const setItem = vi.fn();
+      const storage: SyncStorage = { getItem: () => null, setItem };
+      const cache = new QueryCache<string>({ serializeKey });
+      const stop = persistCache(cache, storage, { debounce: 100, key: "custom" });
+      cache.write("a", 1);
+      cache.write("b", 2);
+      cache.write("c", 3);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(setItem).toHaveBeenCalledTimes(1);
+      expect(setItem).toHaveBeenCalledWith("custom", expect.stringContaining('"b"'));
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("instrumentTransport proxy semantics", () => {
+  it("onclose/onerror assigned through the proxy land on the target and fire", () => {
+    const inner: TransportLike & { onclose?: () => void; fire(): void } = {
+      send: async () => {},
+      fire() {
+        (this.onclose as (() => void) | undefined)?.();
+      },
+    };
+    const tapped = instrumentTransport(inner, () => {});
+    const closed = vi.fn();
+    (tapped as typeof inner).onclose = closed;
+    inner.fire(); // the transport invokes its own handler internally
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(typeof (tapped as typeof inner).onclose).toBe("function"); // readable back through the proxy
+  });
+
+  it("methods read through the proxy are bound to the target (this-safe)", async () => {
+    const inner = {
+      count: 0,
+      send: async () => {},
+      bumpSelf() {
+        (this as { count: number }).count++;
+      },
+    } satisfies TransportLike & { count: number; bumpSelf(): void };
+    const tapped = instrumentTransport(inner, () => {});
+    const detached = tapped.bumpSelf as () => void;
+    detached(); // would throw / miss `this` if unbound
+    expect(inner.count).toBe(1);
+  });
+
+  it("reading onmessage before any assignment yields undefined (the tap is invisible)", () => {
+    const inner: TransportLike = { send: async () => {} };
+    const tapped = instrumentTransport(inner, () => {});
+    expect(tapped.onmessage).toBeUndefined();
+    expect(typeof inner.onmessage).toBe("function"); // …but the wire tap is installed underneath
+  });
+
+  it("swapping onmessage re-routes; old handler stops receiving", () => {
+    const inner: TransportLike = { send: async () => {} };
+    const tapped = instrumentTransport(inner, () => {});
+    const first = vi.fn();
+    const second = vi.fn();
+    tapped.onmessage = first;
+    inner.onmessage?.({ method: "a" });
+    tapped.onmessage = second;
+    inner.onmessage?.({ method: "b" });
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it("send tap still applies after a consumer replaces send on the proxy", async () => {
+    const sent: unknown[] = [];
+    const events: TrafficEvent[] = [];
+    const inner: TransportLike = { send: async (m) => void sent.push(["v1", m]) };
+    const tapped = instrumentTransport(inner, (e) => events.push(e));
+    tapped.send2 = async () => {}; // arbitrary prop write passes through
+    (tapped as { send: (m: unknown) => Promise<void> }).send = async (m: unknown) => void sent.push(["v2", m]);
+    await tapped.send({ method: "x" });
+    expect(events).toHaveLength(1); // still tapped
+    expect(sent).toEqual([["v2", { method: "x" }]]); // replacement took effect
+  });
+});
+
+describe("DevtoolsHub", () => {
+  it("subscriber unsubscribe stops notifications; events() is the live ring", () => {
+    const hub = new DevtoolsHub(3);
+    const ping = vi.fn();
+    const un = hub.subscribe(ping);
+    hub.emit({ type: "a" });
+    un();
+    hub.emit({ type: "b" });
+    expect(ping).toHaveBeenCalledTimes(1);
+    expect(hub.events().map((e) => e.type)).toEqual(["a", "b"]);
+  });
+
+  it("default capacity is 500 (ring wraps at the cap)", () => {
+    const hub = new DevtoolsHub();
+    for (let i = 0; i < 505; i++) hub.emit({ type: "e", i });
+    expect(hub.events()).toHaveLength(500);
+    expect((hub.events()[0] as unknown as { i: number }).i).toBe(5);
+  });
+});
+
+describe("interceptors errors", () => {
+  it("a throwing exec propagates through the chain; interceptors can observe via try/finally", async () => {
+    const seen: string[] = [];
+    const timing: RequestInterceptor = async (o, next) => {
+      seen.push("start");
+      try {
+        return await next(o);
+      } finally {
+        seen.push("end");
+      }
+    };
+    await expect(
+      runInterceptors([timing], op(), async () => {
+        throw new Error("downstream boom");
+      }),
+    ).rejects.toThrow("downstream boom");
+    expect(seen).toEqual(["start", "end"]);
+  });
+
+  it("an empty chain just runs exec", async () => {
+    const result = await runInterceptors([], op({ target: "x" }), async (o) => o.target);
+    expect(result).toBe("x");
+  });
+
+  it("interceptors can replace the operation object passed to next", async () => {
+    const swap: RequestInterceptor = async (o, next) => next({ ...o, target: "swapped" });
+    const result = await runInterceptors([swap], op({ target: "orig" }), async (o) => o.target);
+    expect(result).toBe("swapped");
+  });
+});

@@ -18,21 +18,29 @@ export interface PersistOptions {
 /** Hydrate `cache` from `storage` and keep it saved. Returns a stop() function. */
 export function persistCache(cache: QueryCache<never> | QueryCache<any>, storage: SyncStorage, opts: PersistOptions = {}): () => void {
   const key = opts.key ?? "agent-query-cache";
-  const raw = storage.getItem(key);
-  if (raw) {
-    try {
-      cache.hydrate(JSON.parse(raw));
-    } catch {
-      /* ignore corrupt snapshot */
-    }
+  try {
+    const raw = storage.getItem(key);
+    if (raw) cache.hydrate(JSON.parse(raw));
+  } catch {
+    /* ignore corrupt snapshot / unreadable storage */
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const unsub = cache.subscribeAll(() => {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => storage.setItem(key, JSON.stringify(cache.dehydrate())), opts.debounce ?? 250);
+    timer = setTimeout(() => {
+      timer = undefined;
+      try {
+        storage.setItem(key, JSON.stringify(cache.dehydrate()));
+      } catch {
+        /* storage full / unavailable — persistence is best-effort, never crash the app */
+      }
+    }, opts.debounce ?? 250);
+    // Don't hold the (Node) process open for a pending save; no-op in browsers.
+    (timer as unknown as { unref?: () => void }).unref?.();
   });
   return () => {
     if (timer) clearTimeout(timer);
+    timer = undefined;
     unsub();
   };
 }

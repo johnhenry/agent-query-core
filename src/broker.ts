@@ -102,12 +102,26 @@ export class InteractionBroker<D extends BaseDecision = BaseDecision> {
    * The full gate: policy first, then (on "ask") queue for a human. Returns the
    * decision — auto verdicts synthesize one. Adapters usually call this from
    * their protocol handlers and map the decision back onto the wire.
+   *
+   * ⚠️ DECISION CONTRACT — when `D` extends `BaseDecision` with **required** extra
+   * fields, you MUST pass `autoApprove` / `autoDeny`. The built-in fallbacks are the
+   * bare `{ action: "approve" }` / `{ action: "deny" }` objects cast to `D` — the
+   * type system cannot verify them against your extension, so an auto verdict
+   * without an explicit decision would hand your protocol handler an object missing
+   * those required fields at runtime. (Optional extra fields are safe to omit.)
+   *
+   * `timeoutMs` (optional, default: wait forever) bounds the human wait on the
+   * "ask" path only: if the UI never resolves, the pending interaction is removed
+   * from the queue, the audit trail records outcome `"error"` with reason
+   * `"timeout"`, and the gate returns verdict `"denied"` with the `autoDeny`
+   * decision (or `{ action: "deny", reason: "timeout" }`). Auto verdicts are
+   * unaffected.
    */
   async gate(
     type: string,
     peer: string,
     payload: unknown,
-    opts: { phase?: InteractionPhase; manual?: boolean; autoApprove?: D; autoDeny?: D } = {},
+    opts: { phase?: InteractionPhase; manual?: boolean; autoApprove?: D; autoDeny?: D; timeoutMs?: number } = {},
   ): Promise<{ verdict: "auto-allow" | "auto-deny" | "approved" | "denied"; decision: D }> {
     const verdict = await this.decide({ peer, type, payload });
     if (verdict === "deny") {
@@ -118,7 +132,27 @@ export class InteractionBroker<D extends BaseDecision = BaseDecision> {
       this.record(peer, type, "auto-allow");
       return { verdict: "auto-allow", decision: opts.autoApprove ?? ({ action: "approve" } as D) };
     }
-    const decision = await this.enqueue(type, opts.phase ?? "request", peer, payload, opts.manual);
+    const queued = this.enqueueTracked(type, opts.phase ?? "request", peer, payload, opts.manual ?? false);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const raced =
+      opts.timeoutMs == null
+        ? await queued.promise
+        : await Promise.race([
+            queued.promise,
+            // NOTE: deliberately NOT unref'd — the caller is awaiting this deadline, so
+            // in Node it must keep the process alive until it fires or the UI answers.
+            new Promise<"__timeout__">((res) => {
+              timer = setTimeout(() => res("__timeout__"), opts.timeoutMs);
+            }),
+          ]);
+    if (timer) clearTimeout(timer);
+    if (raced === "__timeout__") {
+      // Withdraw the now-moot interaction from the UI queue.
+      if (this.pending.delete(queued.id)) this.bump();
+      this.record(peer, type, "error", "timeout");
+      return { verdict: "denied", decision: opts.autoDeny ?? ({ action: "deny", reason: "timeout" } as D) };
+    }
+    const decision = raced;
     const outcome = decision.action === "approve" ? "approved" : "denied";
     this.record(peer, type, outcome, decision.reason);
     return { verdict: outcome, decision };
@@ -126,12 +160,23 @@ export class InteractionBroker<D extends BaseDecision = BaseDecision> {
 
   /** Queue an interaction and await the UI's decision (no policy consultation). */
   enqueue(type: string, phase: InteractionPhase, peer: string, payload: unknown, manual = false): Promise<D> {
+    return this.enqueueTracked(type, phase, peer, payload, manual).promise;
+  }
+
+  private enqueueTracked(
+    type: string,
+    phase: InteractionPhase,
+    peer: string,
+    payload: unknown,
+    manual: boolean,
+  ): { id: number; promise: Promise<D> } {
     const id = ++this.seq;
     const interaction: Interaction = { id, type, phase, peer, payload, manual, createdAt: this.now() };
-    return new Promise<D>((resolve) => {
+    const promise = new Promise<D>((resolve) => {
       this.pending.set(id, { interaction, resolve });
       this.bump();
     });
+    return { id, promise };
   }
 
   /** Append to the audit trail (adapters may record protocol-side outcomes too). */

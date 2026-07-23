@@ -94,6 +94,11 @@ export class QueryCache<K = unknown> {
   }
 
   // ── reads ──────────────────────────────────────────────────────────────
+  /** Canonical string form of a structured key (the adapter-supplied serializer). */
+  serializeKey(key: K): string {
+    return this.serialize(key);
+  }
+
   getSnapshot(key: K): CacheEntry<unknown, K> | undefined {
     return this.entries.get(this.serialize(key));
   }
@@ -126,11 +131,19 @@ export class QueryCache<K = unknown> {
     if (entry.subscribers === 1) this.events.onSubscribe?.(entry);
 
     return () => {
-      set!.delete(fn);
-      entry.subscribers = Math.max(0, entry.subscribers - 1);
-      if (entry.subscribers === 0) {
-        this.events.onUnsubscribe?.(entry);
-        this.scheduleGc(entry);
+      // Idempotent: a second call (or a call after the listener set was replaced)
+      // must not decrement the ref count again.
+      const s = this.listeners.get(k);
+      if (!s || !s.delete(fn)) return;
+      if (s.size === 0) this.listeners.delete(k);
+      // Look the entry up fresh: `remove()` may have evicted the captured entry and a
+      // later write recreated it. Decrementing the orphaned object would leak the count.
+      const cur = this.entries.get(k);
+      if (!cur) return;
+      cur.subscribers = Math.max(0, cur.subscribers - 1);
+      if (cur.subscribers === 0) {
+        this.events.onUnsubscribe?.(cur);
+        this.scheduleGc(cur);
       }
     };
   }
@@ -167,6 +180,12 @@ export class QueryCache<K = unknown> {
   }
 
   // ── writes ───────────────────────────────────────────────────────────────
+  /**
+   * Mark a refetch in flight. Entries with cached data keep status "success" (the
+   * stale-while-revalidate render path); idle OR errored entries become "fetching" —
+   * a retry after an error intentionally shows as loading again, though `error`
+   * stays set until the next write/setError so UIs can keep showing the last failure.
+   */
   setFetching(key: K): void {
     const e = this.ensure(key);
     e.status = e.status === "success" ? "success" : "fetching";
@@ -238,19 +257,33 @@ export class QueryCache<K = unknown> {
   }
 
   // ── optimistic updates ───────────────────────────────────────────────────
-  /** Apply patches, return a rollback fn. Used by mutation hooks before a call resolves. */
+  /**
+   * Apply patches, return a rollback fn. Used by mutation hooks before a call resolves.
+   * Patching a key with no successful entry creates a provisional one (status stays
+   * "idle" — the patch is data-only); rolling back removes such ghosts entirely rather
+   * than leaving an idle entry with stale optimistic residue.
+   */
   patch(patches: CachePatch<K>[]): () => void {
-    const prev: Array<{ key: string; data: unknown; existed: boolean }> = [];
+    const prev: Array<{ key: string; cacheKey: K; data: unknown; existed: boolean }> = [];
     for (const p of patches) {
       const e = this.ensure(p.key);
-      prev.push({ key: e.key, data: e.data, existed: e.status === "success" });
+      prev.push({ key: e.key, cacheKey: e.cacheKey, data: e.data, existed: e.status === "success" });
       e.data = p.recipe(e.data);
+      // Provisional entries must not linger forever if nobody observes them.
+      if (e.subscribers === 0) this.scheduleGc(e);
       this.emit(e.key);
     }
     return () => {
       for (const snap of prev) {
         const e = this.entries.get(snap.key);
         if (!e) continue;
+        if (!snap.existed) {
+          // The entry did not hold real data when patched. If it still doesn't,
+          // evict the ghost wholesale; if a real write landed since, keep it —
+          // rolling back to "nothing" would clobber fresher server truth.
+          if (e.status !== "success") this.remove(snap.cacheKey);
+          continue;
+        }
         e.data = snap.data;
         this.emit(e.key);
       }
@@ -283,12 +316,25 @@ export class QueryCache<K = unknown> {
         .map((e) => ({ cacheKey: e.cacheKey, data: e.data, tags: [...e.tags], updatedAt: e.updatedAt })),
     };
   }
-  /** Restore a snapshot. Entries keep their original age, so staleTime still applies. */
+  /**
+   * Restore a snapshot. Entries keep their original age, so staleTime still applies.
+   * The preserved `updatedAt` is in place BEFORE subscribers are notified (a plain
+   * `write()` would emit with age "now" and silently rewind it afterwards), and
+   * structural sharing still applies: hydrating data deep-equal to what's cached
+   * keeps the reference and skips the version bump.
+   */
   hydrate(snapshot: { entries: Array<{ cacheKey: K; data: unknown; tags: Tag[]; updatedAt: number }> }): void {
     for (const s of snapshot.entries) {
-      this.write(s.cacheKey, s.data, { tags: s.tags });
-      const e = this.entries.get(this.serialize(s.cacheKey));
-      if (e) e.updatedAt = s.updatedAt; // preserve age rather than "now"
+      const e = this.ensure(s.cacheKey);
+      const unchanged = e.status === "success" && structuralEqual(e.data, s.data);
+      if (!unchanged) e.data = s.data;
+      e.error = undefined;
+      e.status = "success";
+      e.isStale = false;
+      e.updatedAt = s.updatedAt; // preserve age rather than "now"
+      this.reindexTags(e, s.tags);
+      if (e.subscribers === 0) this.scheduleGc(e); // hydrated-but-unobserved entries still gc
+      if (!unchanged) this.emit(e.key);
     }
   }
 
@@ -305,7 +351,10 @@ export class QueryCache<K = unknown> {
         staleTime: this.defaultStale,
         gcTime: this.defaultGc,
         tags: new Set(),
-        subscribers: 0,
+        // Seed from the live listener set: after `remove()`, subscribers keep
+        // observing the key, so a recreated entry must inherit their ref count
+        // (otherwise a write would schedule gc under an active observer).
+        subscribers: this.listeners.get(k)?.size ?? 0,
         version: 0,
         protocolSubscribed: false,
       };

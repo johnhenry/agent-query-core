@@ -87,3 +87,147 @@ describe("broker plumbing", () => {
     expect(() => broker.resolve(999, { action: "approve" })).not.toThrow();
   });
 });
+
+describe("gate timeoutMs", () => {
+  it("denies on timeout: queue cleared, audit outcome 'error' with reason 'timeout'", async () => {
+    vi.useFakeTimers();
+    try {
+      const broker = new InteractionBroker();
+      const p = broker.gate("permission", "peer1", {}, { timeoutMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1); // let the interaction enqueue
+      expect(broker.list()).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1100);
+      const { verdict, decision } = await p;
+      expect(verdict).toBe("denied");
+      expect(decision).toEqual({ action: "deny", reason: "timeout" });
+      expect(broker.list()).toHaveLength(0); // withdrawn from the UI queue
+      expect(broker.auditLog().at(-1)).toMatchObject({ outcome: "error", reason: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("carries a custom autoDeny decision on timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      type D = BaseDecision & { code: string };
+      const broker = new InteractionBroker<D>();
+      const p = broker.gate("permission", "p", {}, { timeoutMs: 50, autoDeny: { action: "deny", code: "T" } });
+      await vi.advanceTimersByTimeAsync(60);
+      expect((await p).decision.code).toBe("T");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a UI decision before the deadline wins (timer does not fire a second outcome)", async () => {
+    vi.useFakeTimers();
+    try {
+      const broker = new InteractionBroker();
+      const p = broker.gate("permission", "p", {}, { timeoutMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1);
+      broker.resolve(broker.list()[0]!.id, { action: "approve" });
+      const { verdict } = await p;
+      expect(verdict).toBe("approved");
+      const auditBefore = broker.auditLog().length;
+      await vi.advanceTimersByTimeAsync(2000); // deadline passes harmlessly
+      expect(broker.auditLog()).toHaveLength(auditBefore);
+      expect(broker.auditLog().at(-1)?.outcome).toBe("approved");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolve after timeout is a no-op (the pending slot is gone)", async () => {
+    vi.useFakeTimers();
+    try {
+      const broker = new InteractionBroker();
+      const p = broker.gate("permission", "p", {}, { timeoutMs: 50 });
+      await vi.advanceTimersByTimeAsync(1);
+      const id = broker.list()[0]!.id;
+      await vi.advanceTimersByTimeAsync(100);
+      await p;
+      expect(() => broker.resolve(id, { action: "approve" })).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("without timeoutMs the gate waits indefinitely (default off)", async () => {
+    vi.useFakeTimers();
+    try {
+      const broker = new InteractionBroker();
+      let settled = false;
+      const p = broker.gate("permission", "p", {});
+      void p.then(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(settled).toBe(false);
+      broker.resolve(broker.list()[0]!.id, { action: "approve" });
+      await p;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("broker concurrency", () => {
+  it("concurrent gates resolve independently, out of order", async () => {
+    const broker = new InteractionBroker();
+    const p1 = broker.gate("permission", "peerA", { n: 1 });
+    const p2 = broker.gate("permission", "peerB", { n: 2 });
+    await tick();
+    const [i1, i2] = broker.list();
+    expect(broker.list()).toHaveLength(2);
+    broker.resolve(i2!.id, { action: "deny", reason: "second first" }); // LIFO
+    broker.resolve(i1!.id, { action: "approve" });
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.verdict).toBe("approved");
+    expect(r2.verdict).toBe("denied");
+    expect(r2.decision.reason).toBe("second first");
+    expect(broker.list()).toHaveLength(0);
+  });
+
+  it("an async policy is awaited per interaction", async () => {
+    const broker = new InteractionBroker({
+      policy: async ({ peer }) => {
+        await tick(1);
+        return peer === "trusted" ? "allow" : "deny";
+      },
+    });
+    expect((await broker.gate("t", "trusted", {})).verdict).toBe("auto-allow");
+    expect((await broker.gate("t", "evil", {})).verdict).toBe("auto-deny");
+  });
+
+  it("decide() consults the policy without queueing; defaults to 'ask'", async () => {
+    const noPolicy = new InteractionBroker();
+    expect(await noPolicy.decide({ peer: "p", type: "t", payload: null })).toBe("ask");
+    const broker = new InteractionBroker({ policy: () => "allow" });
+    expect(await broker.decide({ peer: "p", type: "t", payload: null })).toBe("allow");
+    expect(broker.list()).toHaveLength(0);
+  });
+
+  it("audit sink unsubscribe stops delivery; constructor onAudit keeps receiving", () => {
+    const ctor = vi.fn();
+    const late = vi.fn();
+    const broker = new InteractionBroker({ onAudit: ctor });
+    const un = broker.addAuditSink(late);
+    broker.record("p", "t", "approved");
+    un();
+    broker.record("p", "t", "denied");
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(ctor).toHaveBeenCalledTimes(2);
+  });
+
+  it("interaction metadata: ids are unique and increasing, createdAt uses the injected clock", async () => {
+    let now = 42;
+    const broker = new InteractionBroker({ now: () => now });
+    void broker.enqueue("a", "request", "p", {});
+    now = 43;
+    void broker.enqueue("b", "response", "p", {});
+    const [i1, i2] = broker.list();
+    expect(i2!.id).toBeGreaterThan(i1!.id);
+    expect(i1!.createdAt).toBe(42);
+    expect(i2!.createdAt).toBe(43);
+    expect(i2!.phase).toBe("response");
+  });
+});

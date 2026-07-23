@@ -6,18 +6,34 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { QueryCache, CacheEntry } from "../cache.js";
 import type { InteractionBroker, Interaction, AuditEntry, BaseDecision } from "../broker.js";
 
-/** Subscribe to any versioned store: re-render when `getVersion()` changes. */
-export function useVersioned(subscribe: (fn: () => void) => () => void, getVersion: () => number): number {
-  return useSyncExternalStore(subscribe, getVersion, getVersion);
+const zero = () => 0;
+
+/**
+ * Subscribe to any versioned store: re-render when `getVersion()` changes.
+ * The server snapshot defaults to 0 so SSR output is deterministic regardless of
+ * live store state (pass `getServerVersion` to override).
+ */
+export function useVersioned(
+  subscribe: (fn: () => void) => () => void,
+  getVersion: () => number,
+  getServerVersion: () => number = zero,
+): number {
+  return useSyncExternalStore(subscribe, getVersion, getServerVersion);
 }
 
-/** Observe one cache entry reactively. */
+/**
+ * Observe one cache entry reactively. The subscription is keyed by the cache's own
+ * canonical serializer, so structurally-equal keys built inline on every render
+ * (or with different property orders across call sites) never cause resubscribe churn.
+ */
 export function useCacheEntry<K>(cache: QueryCache<K>, key: K): CacheEntry<unknown, K> | undefined {
-  const subscribe = useCallback((fn: () => void) => cache.subscribe(key, fn), [cache, JSON.stringify(key)]);
+  const stableKey = cache.serializeKey(key);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- stableKey is the canonical identity of `key`
+  const subscribe = useCallback((fn: () => void) => cache.subscribe(key, fn), [cache, stableKey]);
   useSyncExternalStore(
     subscribe,
     () => cache.getVersion(key),
-    () => cache.getVersion(key),
+    zero, // SSR: no live store on the server — a constant keeps hydration deterministic
   );
   return cache.getSnapshot(key);
 }
