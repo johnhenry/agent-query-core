@@ -397,3 +397,85 @@ describe("entityTag", () => {
     expect(entityTag("User", "ada")).toBe("User:ada");
   });
 });
+
+describe("isOptimistic (hasPendingWrites-style flag)", () => {
+  it("initializes false, set by patch, cleared by a server-confirmed write", () => {
+    const cache = make();
+    cache.write(K("a"), { n: 1 });
+    expect(cache.getSnapshot(K("a"))!.isOptimistic).toBe(false);
+    cache.patch([{ key: K("a"), recipe: () => ({ n: 2 }) }]);
+    expect(cache.getSnapshot(K("a"))!.isOptimistic).toBe(true);
+    cache.write(K("a"), { n: 2 }); // server confirms
+    expect(cache.getSnapshot(K("a"))!.isOptimistic).toBe(false);
+  });
+
+  it("a write with data equal to the optimistic value STILL emits (flag transition)", () => {
+    const cache = make();
+    cache.write(K("a"), { n: 1 });
+    cache.patch([{ key: K("a"), recipe: () => ({ n: 2 }) }]);
+    const listener = vi.fn();
+    cache.subscribe(K("a"), listener);
+    const v = cache.getVersion(K("a"));
+    cache.write(K("a"), { n: 2 }); // deep-equal to optimistic data, but flag flips
+    expect(cache.getVersion(K("a"))).toBe(v + 1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(cache.getSnapshot(K("a"))!.isOptimistic).toBe(false);
+    // ...and a genuinely unchanged non-optimistic rewrite stays silent.
+    cache.write(K("a"), { n: 2 });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("rollback clears the flag and restores data", () => {
+    const cache = make();
+    cache.write(K("a"), { n: 1 });
+    const rollback = cache.patch([{ key: K("a"), recipe: () => ({ n: 99 }) }]);
+    expect(cache.getSnapshot(K("a"))!.isOptimistic).toBe(true);
+    rollback();
+    expect(cache.getSnapshot(K("a"))!.data).toEqual({ n: 1 });
+    expect(cache.getSnapshot(K("a"))!.isOptimistic).toBe(false);
+  });
+
+  it("overlapping patches share the flag; rolling back the inner one keeps it set", () => {
+    const cache = make();
+    cache.write(K("a"), { n: 1 });
+    cache.patch([{ key: K("a"), recipe: () => ({ n: 2 }) }]); // outer, stays pending
+    const rollbackInner = cache.patch([{ key: K("a"), recipe: () => ({ n: 3 }) }]);
+    rollbackInner();
+    expect(cache.getSnapshot(K("a"))!.data).toEqual({ n: 2 });
+    expect(cache.getSnapshot(K("a"))!.isOptimistic).toBe(true); // outer patch still unconfirmed
+  });
+
+  it("ghost-entry rollback removes the entry wholesale (flag dies with it)", () => {
+    const cache = make();
+    const rollback = cache.patch([{ key: K("ghost"), recipe: () => "temp" }]);
+    expect(cache.getSnapshot(K("ghost"))!.isOptimistic).toBe(true);
+    rollback();
+    expect(cache.getSnapshot(K("ghost"))).toBeUndefined();
+  });
+
+  it("ghost rollback after a superseding write keeps the (non-optimistic) server truth", () => {
+    const cache = make();
+    const rollback = cache.patch([{ key: K("ghost"), recipe: () => "temp" }]);
+    cache.write(K("ghost"), "server");
+    expect(cache.getSnapshot(K("ghost"))!.isOptimistic).toBe(false);
+    rollback();
+    expect(cache.getSnapshot(K("ghost"))!.data).toBe("server");
+    expect(cache.getSnapshot(K("ghost"))!.isOptimistic).toBe(false);
+  });
+
+  it("hydrate never restores optimistic state (and emits when clearing it)", () => {
+    const source = make();
+    source.write(K("a"), { n: 1 });
+    const snapshot = source.dehydrate();
+
+    const target = make();
+    target.write(K("a"), { n: 0 });
+    target.patch([{ key: K("a"), recipe: () => ({ n: 1 }) }]); // optimistic, equal to snapshot data
+    expect(target.getSnapshot(K("a"))!.isOptimistic).toBe(true);
+    const listener = vi.fn();
+    target.subscribe(K("a"), listener);
+    target.hydrate(snapshot);
+    expect(target.getSnapshot(K("a"))!.isOptimistic).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(1); // flag transition emitted despite equal data
+  });
+});

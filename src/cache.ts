@@ -21,6 +21,14 @@ export interface CacheEntry<T = unknown, K = unknown> {
   error?: Error;
   status: "idle" | "fetching" | "success" | "error";
   isStale: boolean;
+  /**
+   * Firestore-hasPendingWrites-style flag: true while the entry's data includes
+   * an optimistic `patch()` not yet confirmed by a server `write()`. A BOOLEAN,
+   * not a counter — overlapping patches share the flag, and the next write or
+   * rollback clears it for all of them. Never persisted: hydrate() always
+   * restores entries with `isOptimistic: false`.
+   */
+  isOptimistic: boolean;
   updatedAt: number;
   staleTime: number;
   gcTime: number;
@@ -199,6 +207,10 @@ export class QueryCache<K = unknown> {
     // and refresh staleness WITHOUT bumping the version — so observers don't re-render
     // on a no-op update (e.g. a push notification whose bytes didn't actually change).
     const unchanged = e.status === "success" && structuralEqual(e.data, data);
+    // A server-confirmed write settles any optimistic patch. If the confirmed
+    // bytes equal the optimistic ones, the flag transition alone must emit.
+    const wasOptimistic = e.isOptimistic;
+    e.isOptimistic = false;
     if (!unchanged) e.data = data;
     e.error = undefined;
     e.status = "success";
@@ -210,7 +222,7 @@ export class QueryCache<K = unknown> {
     this.reindexTags(e, opts.tags);
     // Unobserved entries must not linger forever: give them a gc deadline at write time.
     if (e.subscribers === 0) this.scheduleGc(e);
-    if (!unchanged) this.emit(e.key);
+    if (!unchanged || wasOptimistic) this.emit(e.key);
   }
 
   // ── in-flight de-duplication + abort-when-unobserved ─────────────────────
@@ -256,19 +268,51 @@ export class QueryCache<K = unknown> {
     if (broadcast) this.events.onInvalidateTags?.(tags);
   }
 
+  /**
+   * Mark specific entries stale by structured key — `invalidateTags` semantics
+   * (mark stale + emit + `events.onInvalidate`) without the tag index or the
+   * distributed `onInvalidateTags` broadcast (keys are local vocabulary; other
+   * nodes invalidate by tag). Missing keys are ignored. Used by refetch
+   * triggers (`wireRevalidation`) and available to adapters directly.
+   */
+  invalidateKeys(keys: K[]): void {
+    const touched: string[] = [];
+    for (const key of keys) {
+      const e = this.entries.get(this.serialize(key));
+      if (e) {
+        e.isStale = true;
+        touched.push(e.key);
+      }
+    }
+    for (const k of touched) this.emit(k);
+    if (touched.length) this.events.onInvalidate?.(touched);
+  }
+
   // ── optimistic updates ───────────────────────────────────────────────────
   /**
    * Apply patches, return a rollback fn. Used by mutation hooks before a call resolves.
    * Patching a key with no successful entry creates a provisional one (status stays
    * "idle" — the patch is data-only); rolling back removes such ghosts entirely rather
    * than leaving an idle entry with stale optimistic residue.
+   *
+   * Every patched entry gets `isOptimistic: true` until the next server-confirmed
+   * `write()` or a rollback. The flag is a boolean, not a counter: overlapping
+   * patches share it, and rolling back one patch restores the flag as it stood
+   * when THAT patch was applied (so an outer pending patch keeps it true).
    */
   patch(patches: CachePatch<K>[]): () => void {
-    const prev: Array<{ key: string; cacheKey: K; data: unknown; existed: boolean }> = [];
+    const prev: Array<{ key: string; cacheKey: K; data: unknown; existed: boolean; wasOptimistic: boolean }> = [];
     for (const p of patches) {
       const e = this.ensure(p.key);
-      prev.push({ key: e.key, cacheKey: e.cacheKey, data: e.data, existed: e.status === "success" });
+      prev.push({
+        key: e.key,
+        cacheKey: e.cacheKey,
+        data: e.data,
+        existed: e.status === "success",
+        wasOptimistic: e.isOptimistic,
+      });
       e.data = p.recipe(e.data);
+      e.isOptimistic = true;
       // Provisional entries must not linger forever if nobody observes them.
       if (e.subscribers === 0) this.scheduleGc(e);
       this.emit(e.key);
@@ -280,11 +324,13 @@ export class QueryCache<K = unknown> {
         if (!snap.existed) {
           // The entry did not hold real data when patched. If it still doesn't,
           // evict the ghost wholesale; if a real write landed since, keep it —
-          // rolling back to "nothing" would clobber fresher server truth.
+          // rolling back to "nothing" would clobber fresher server truth (and
+          // that write already cleared isOptimistic).
           if (e.status !== "success") this.remove(snap.cacheKey);
           continue;
         }
         e.data = snap.data;
+        e.isOptimistic = snap.wasOptimistic;
         this.emit(e.key);
       }
     };
@@ -327,6 +373,11 @@ export class QueryCache<K = unknown> {
     for (const s of snapshot.entries) {
       const e = this.ensure(s.cacheKey);
       const unchanged = e.status === "success" && structuralEqual(e.data, s.data);
+      // Optimistic state never persists (dehydrate only captures server-confirmed
+      // entries, and a restored process has no pending mutation to confirm) —
+      // hydrating always lands the entry as non-optimistic.
+      const wasOptimistic = e.isOptimistic;
+      e.isOptimistic = false;
       if (!unchanged) e.data = s.data;
       e.error = undefined;
       e.status = "success";
@@ -334,7 +385,7 @@ export class QueryCache<K = unknown> {
       e.updatedAt = s.updatedAt; // preserve age rather than "now"
       this.reindexTags(e, s.tags);
       if (e.subscribers === 0) this.scheduleGc(e); // hydrated-but-unobserved entries still gc
-      if (!unchanged) this.emit(e.key);
+      if (!unchanged || wasOptimistic) this.emit(e.key);
     }
   }
 
@@ -347,6 +398,7 @@ export class QueryCache<K = unknown> {
         cacheKey: key,
         status: "idle",
         isStale: true,
+        isOptimistic: false,
         updatedAt: 0,
         staleTime: this.defaultStale,
         gcTime: this.defaultGc,
