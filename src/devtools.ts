@@ -16,12 +16,18 @@ export interface DevtoolsSink<TEvent extends DevtoolsEventBase = DevtoolsEventBa
 export class DevtoolsHub<TEvent extends DevtoolsEventBase = DevtoolsEventBase> implements DevtoolsSink<TEvent> {
   private buf: TEvent[] = [];
   private subs = new Set<() => void>();
+  private version = 0;
   constructor(private capacity = 500) {}
 
   emit(e: TEvent): void {
     this.buf.push(e);
     if (this.buf.length > this.capacity) this.buf.shift();
+    this.version++;
     for (const fn of this.subs) fn();
+  }
+  /** Monotonic counter bumped on every emit — lets panels use useVersioned/useSyncExternalStore. */
+  getVersion(): number {
+    return this.version;
   }
   events(): readonly TEvent[] {
     return this.buf;

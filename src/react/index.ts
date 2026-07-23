@@ -5,6 +5,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import type { QueryCache, CacheEntry } from "../cache.js";
 import type { InteractionBroker, Interaction, AuditEntry, BaseDecision } from "../broker.js";
+import type { StatusStore, PeerStatus } from "../status.js";
 
 const zero = () => 0;
 
@@ -64,3 +65,23 @@ export function useAuditLog(broker: InteractionBroker<BaseDecision> | undefined)
   );
   return broker?.auditLog() ?? [];
 }
+
+/** One peer's connectivity status, reactively. */
+export function usePeerStatus(store: StatusStore, peer: string): PeerStatus | undefined;
+/** ALL peers' statuses (the store's `list()`), reactively. */
+export function usePeerStatus(store: StatusStore): Array<[string, PeerStatus]>;
+export function usePeerStatus(
+  store: StatusStore,
+  peer?: string,
+): PeerStatus | undefined | Array<[string, PeerStatus]> {
+  const subscribe = useCallback((fn: () => void) => store.subscribe(fn), [store]);
+  useSyncExternalStore(
+    subscribe,
+    () => store.getVersion(),
+    zero, // SSR: no live store on the server — a constant keeps hydration deterministic
+  );
+  return peer === undefined ? store.list() : store.get(peer);
+}
+
+export { AgentQueryDevtools } from "./devtools.js";
+export type { AgentQueryDevtoolsProps } from "./devtools.js";

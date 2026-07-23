@@ -306,3 +306,16 @@ describe("interceptors errors", () => {
     expect(result).toBe("swapped");
   });
 });
+
+describe("DevtoolsHub.getVersion", () => {
+  it("is a monotonic counter bumped on every emit (past the ring cap too)", () => {
+    const hub = new DevtoolsHub(2);
+    expect(hub.getVersion()).toBe(0);
+    hub.emit({ type: "a" });
+    hub.emit({ type: "b" });
+    expect(hub.getVersion()).toBe(2);
+    hub.emit({ type: "c" }); // evicts "a" from the ring but still bumps
+    expect(hub.getVersion()).toBe(3);
+    expect(hub.events()).toHaveLength(2);
+  });
+});
