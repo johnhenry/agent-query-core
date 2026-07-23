@@ -9,6 +9,16 @@ libraries ([a2a-query](https://github.com/johnhenry/a2a-query), acp-query, …) 
 implementation while each adapter supplies its protocol vocabulary (key kinds, tag
 conventions, interaction types, transports).
 
+## Docs & examples
+
+- **[docs/design.md](./docs/design.md)** — the engine's concepts: cache semantics
+  (staleness vs gc vs tags vs structural sharing), the broker model (policy/queue/audit
+  and the `gate()` contract), the interceptor onion, and how adapters bind (with real
+  a2aq/acpq usage).
+- **[docs/api.md](./docs/api.md)** — every export, one example each.
+- **[examples/](./examples)** — graded runnable demos, no network:
+  `npx tsx examples/01-cache-basics.ts` (or `npm run example:01` … `example:06`).
+
 ## What's inside
 
 - **`QueryCache<K>`** — staleTime/gcTime, tag-based invalidation (RTK-Query style),
