@@ -39,7 +39,9 @@
     "example:03": "tsx examples/03-optimistic-updates.ts",
     "example:04": "tsx examples/04-approval-broker.ts",
     "example:05": "tsx examples/05-interceptors.ts",
-    "example:06": "tsx examples/06-persistence.ts"
+    "example:06": "tsx examples/06-persistence.ts",
+    "example:07": "tsx examples/07-connection-status.ts",
+    "example:08": "tsx examples/08-retry-policy.ts"
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0"
