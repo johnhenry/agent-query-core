@@ -106,6 +106,38 @@ caller can't afford that (headless runs, protocol deadlines), pass
 records outcome `"error"` with reason `"timeout"`, and the gate returns verdict
 `"denied"` with the `autoDeny` decision (or `{ action: "deny", reason: "timeout" }`).
 
+### Convergent evolution: three protocols, one broker
+
+The opening claim above — "they share a shape" — isn't a design choice we
+imposed; it's an observation that held up under implementation. Three
+unrelated standards bodies independently invented a pause-ask-resume
+mechanism for the identical problem, with three unrelated wire vocabularies:
+
+| | Pause signal | Payload | Resume shape | Once/always |
+|---|---|---|---|---|
+| MCP | `elicitation/create` / `sampling/createMessage` handler registration (the 2026-07-28 redesign folds these into MRTR — `resultType: "input_required"` results retried with `inputResponses` — same handlers, different envelope) | form/URL schema | handler return value | per-call, policy-driven |
+| A2A | Task state `INPUT_REQUIRED` / `AUTH_REQUIRED` (paused, not terminal) | the task + a prompt message | a resume message sent to the same task | broker policy per pause |
+| ACP | `session/request_permission` | an options list (`allow_once`/`allow_always`/`reject_once`/`reject_always`) | selected `optionId`, or `cancelled` | native to the option kind |
+
+Every adapter routes its version through the exact same `gate()` call with
+zero redesign — no protocol-specific broker logic anywhere:
+
+- `mcp-query`: `installHandlers` registers `h.sampling`/`h.elicitation`
+  against the SDK's request-handler schemas
+  (`packages/mcp-query/src/core/handlers.ts`).
+- `a2a-query`: `maybeBroker` calls `interactions.gate(...)` on every observed
+  `INPUT_REQUIRED`/`AUTH_REQUIRED` transition (`src/client.ts`).
+- `acp-query`: `decidePermission` calls
+  `this.interactions.gate("permission", this.agentName, params, ...)` from
+  the `session/request_permission` handler (`src/client.ts`).
+
+No standards body currently acknowledges this convergence — each spec solved
+the human-in-the-loop problem in isolation, with no shared vocabulary across
+MCP, A2A, and ACP for what is, underneath, one interaction. This document is
+the citable record of it: `InteractionBroker<D>`'s payload/decision types are
+generic specifically because the *shape* — policy, queue, audit — turned out
+to be protocol-agnostic in practice, not just in theory.
+
 ## The interceptor onion
 
 `runInterceptors` is the server-side seam: a Koa/Connect-style chain around the
