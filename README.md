@@ -9,6 +9,24 @@ libraries ([a2a-query](https://github.com/johnhenry/a2a-query), acp-query, …) 
 implementation while each adapter supplies its protocol vocabulary (key kinds, tag
 conventions, interaction types, transports).
 
+## Install
+
+```sh
+npm install @johnhenry/agent-query-core@rc
+```
+
+This package has no stable release yet — always install with the `rc` tag. (The
+`latest` npm dist-tag is currently pinned to an older pre-release; `@rc` always
+points at the current release candidate.)
+
+## Protocol versions
+
+`agent-query-core` doesn't speak a wire protocol — it's the shared cache/broker/
+interceptor engine. For which spec versions each protocol adapter supports, see:
+[mcp-query](https://github.com/johnhenry/mcp-query) (MCP),
+[a2a-query](https://github.com/johnhenry/a2a-query) (A2A),
+[acp-query](https://github.com/johnhenry/acp-query) (ACP).
+
 ## Docs & examples
 
 - **[docs/design.md](./docs/design.md)** — the engine's concepts: cache semantics
