@@ -4,7 +4,18 @@
 // this package supplies the reactive machinery.
 
 export { QueryCache, structuralEqual, entityTag } from "./cache.js";
-export type { CacheEntry, CacheEvents, CachePatch, CacheWriteOpts, QueryCacheOptions, Tag } from "./cache.js";
+export type {
+  CacheEntry,
+  CacheEvents,
+  CachePatch,
+  CacheWriteOpts,
+  ExternalInvalidateEvent,
+  QueryCacheOptions,
+  Tag,
+} from "./cache.js";
+export { tagToQueryKey, keyToQueryKey, QUERY_KEY_NAMESPACE } from "./bridge.js";
+export { createBatcher } from "./batch.js";
+export type { Batcher, BatcherOptions } from "./batch.js";
 export { InteractionBroker } from "./broker.js";
 export type {
   AuditEntry,

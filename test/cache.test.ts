@@ -479,3 +479,49 @@ describe("isOptimistic (hasPendingWrites-style flag)", () => {
     expect(listener).toHaveBeenCalledTimes(1); // flag transition emitted despite equal data
   });
 });
+
+describe("onExternalInvalidate (bridge seam)", () => {
+  it("fires with {tags} on invalidateTags regardless of the broadcast flag", () => {
+    const onExternalInvalidate = vi.fn();
+    const cache = make({ events: { onExternalInvalidate } });
+    cache.invalidateTags(["t:x"], false); // the protocol-push case
+    expect(onExternalInvalidate).toHaveBeenCalledWith({ tags: ["t:x"] });
+  });
+
+  it("fires with {tags} even when no local entry/tagIndex matches the tag", () => {
+    const onExternalInvalidate = vi.fn();
+    const cache = make({ events: { onExternalInvalidate } });
+    cache.invalidateTags(["t:nobody-has-this"]);
+    expect(onExternalInvalidate).toHaveBeenCalledWith({ tags: ["t:nobody-has-this"] });
+  });
+
+  it("invalidateTags([]) does not fire onExternalInvalidate", () => {
+    const onExternalInvalidate = vi.fn();
+    const cache = make({ events: { onExternalInvalidate } });
+    cache.invalidateTags([]);
+    expect(onExternalInvalidate).not.toHaveBeenCalled();
+  });
+
+  it("fires with {keys} on invalidateKeys for keys that have no local entry", () => {
+    const onExternalInvalidate = vi.fn();
+    const cache = make({ events: { onExternalInvalidate } });
+    cache.invalidateKeys([K("never-written")]);
+    expect(onExternalInvalidate).toHaveBeenCalledWith({ keys: [K("never-written")] });
+  });
+
+  it("invalidateKeys([]) does not fire onExternalInvalidate", () => {
+    const onExternalInvalidate = vi.fn();
+    const cache = make({ events: { onExternalInvalidate } });
+    cache.invalidateKeys([]);
+    expect(onExternalInvalidate).not.toHaveBeenCalled();
+  });
+
+  it("is independent of onInvalidate/onInvalidateTags — works when only it is supplied", () => {
+    const onExternalInvalidate = vi.fn();
+    const cache = make({ events: { onExternalInvalidate } });
+    cache.write(K("a"), 1, { tags: ["t:x"] });
+    cache.invalidateTags(["t:x"]);
+    expect(cache.getSnapshot(K("a"))?.isStale).toBe(true);
+    expect(onExternalInvalidate).toHaveBeenCalledWith({ tags: ["t:x"] });
+  });
+});

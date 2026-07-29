@@ -63,11 +63,29 @@ export interface CachePatch<K = unknown> {
 
 type Listener = () => void;
 
+export interface ExternalInvalidateEvent<K = unknown> {
+  tags?: Tag[];
+  keys?: K[];
+}
+
 export interface CacheEvents<K = unknown> {
   onSubscribe?: (entry: CacheEntry<unknown, K>) => void; // first subscriber arrived
   onUnsubscribe?: (entry: CacheEntry<unknown, K>) => void; // last subscriber left
   onInvalidate?: (keys: string[]) => void; // for devtools + auto-refetch wiring
   onInvalidateTags?: (tags: Tag[]) => void; // for distributed (L2) invalidation broadcast
+  /**
+   * Fires on EVERY invalidateTags()/invalidateKeys() call — declared
+   * (app-triggered, broadcast=true) or protocol-driven (broadcast=false)
+   * alike — with the full tags/keys requested, regardless of whether this
+   * cache currently holds a matching local entry. Unlike onInvalidate/
+   * onInvalidateTags this is never gated by local matches or the broadcast
+   * flag: it's the seam a bridge package (e.g. a TanStack Query adapter
+   * running this same cache in pass-through mode, where the bridge — not
+   * this cache — owns storage for those queries) uses to translate protocol
+   * push invalidation into `queryClient.invalidateQueries({ queryKey })`.
+   * See bridge.ts for the documented tag/key -> queryKey translation.
+   */
+  onExternalInvalidate?: (event: ExternalInvalidateEvent<K>) => void;
 }
 
 const DEFAULT_STALE = 30_000; // freshly fetched data is fresh for 30s by default
@@ -266,6 +284,7 @@ export class QueryCache<K = unknown> {
     // Declared invalidations broadcast to other nodes; protocol-driven ones stay local
     // (each node receives its own push signal). `broadcast=false` breaks remote loops.
     if (broadcast) this.events.onInvalidateTags?.(tags);
+    if (tags.length) this.events.onExternalInvalidate?.({ tags });
   }
 
   /**
@@ -286,6 +305,7 @@ export class QueryCache<K = unknown> {
     }
     for (const k of touched) this.emit(k);
     if (touched.length) this.events.onInvalidate?.(touched);
+    if (keys.length) this.events.onExternalInvalidate?.({ keys });
   }
 
   // ── optimistic updates ───────────────────────────────────────────────────
