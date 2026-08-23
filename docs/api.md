@@ -437,7 +437,7 @@ Every store except the hub is optional.
 import { AgentQueryDevtools } from "@johnhenry/agent-query-core/react";
 
 <AgentQueryDevtools hub={hub} cache={cache} broker={broker} status={statusStore}
-                    title="mcpq" defaultOpen />
+                    title="mcp-query" defaultOpen />
 ```
 
 SSR note: server snapshots are the constant `0`, so server-rendered output is

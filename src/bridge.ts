@@ -1,5 +1,5 @@
 // The tag/key -> TanStack-style queryKey translation contract for bridge
-// packages (e.g. @johnhenry/mcpq-tanstack, @johnhenry/a2aq-tanstack)
+// packages (e.g. @johnhenry/mcp-query-tanstack, @johnhenry/a2a-query-tanstack)
 // consuming QueryCache's `onExternalInvalidate`. Pure string/array utilities,
 // no @tanstack/query-core dependency — every bridge package imports these
 // from core instead of inventing its own convention, so a tag invalidation

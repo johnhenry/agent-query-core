@@ -32,7 +32,7 @@ interceptor engine. For which spec versions each protocol adapter supports, see:
 - **[docs/design.md](./docs/design.md)** — the engine's concepts: cache semantics
   (staleness vs gc vs tags vs structural sharing), the broker model (policy/queue/audit
   and the `gate()` contract), the interceptor onion, and how adapters bind (with real
-  a2aq/acpq usage).
+  a2a-query/acp-query usage).
 - **[docs/api.md](./docs/api.md)** — every export, one example each.
 - **[examples/](./examples)** — graded runnable demos, no network:
   `npx tsx examples/01-cache-basics.ts` (or `npm run example:01` … `example:08`) —
@@ -70,9 +70,9 @@ interceptor engine. For which spec versions each protocol adapter supports, see:
 
 | Protocol | Library | Status |
 |---|---|---|
-| MCP | [`@johnhenry/mcpq`](https://github.com/johnhenry/mcp-query) | shipping (adopts core in a future major) |
-| A2A | [`@johnhenry/a2aq`](https://github.com/johnhenry/a2a-query) | in development — first core consumer |
-| ACP | `@johnhenry/acpq` | planned |
-| AP2 | a2aq extension module | planned (verification/audit slice first) |
+| MCP | [`@johnhenry/mcp-query`](https://github.com/johnhenry/mcp-query) | shipping (adopts core in a future major) |
+| A2A | [`@johnhenry/a2a-query`](https://github.com/johnhenry/a2a-query) | in development — first core consumer |
+| ACP | `@johnhenry/acp-query` | planned |
+| AP2 | a2a-query extension module | planned (verification/audit slice first) |
 
 MIT
