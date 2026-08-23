@@ -1,5 +1,5 @@
 // @johnhenry/agent-query-core — the protocol-agnostic engine behind the *-query
-// family of agent-protocol data layers (mcpq, a2aq, acpq, …). Adapters supply the
+// family of agent-protocol data layers (mcp-query, a2a-query, acp-query, …). Adapters supply the
 // protocol vocabulary (key kinds, tag conventions, interaction types, transports);
 // this package supplies the reactive machinery.
 
