@@ -107,6 +107,37 @@ describe("gate timeoutMs", () => {
     }
   });
 
+  it("marks the expiry path with timedOut, and only that path", async () => {
+    vi.useFakeTimers();
+    try {
+      // Nobody answered is not the same fact as somebody declined. Without this
+      // flag an adapter supplying autoDeny gets its own decision back on both
+      // paths and cannot tell them apart, so it must smuggle a sentinel through
+      // autoDeny.reason.
+      const broker = new InteractionBroker();
+      const timedOutCall = broker.gate("permission", "peer1", {}, { timeoutMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1100);
+      expect((await timedOutCall).timedOut).toBe(true);
+
+      // A human declining leaves it unset.
+      const declined = broker.gate("permission", "peer1", {}, { timeoutMs: 1000 });
+      await vi.advanceTimersByTimeAsync(1);
+      broker.resolve(broker.list()[0]!.id, { action: "deny", reason: "not now" });
+      const settled = await declined;
+      expect(settled.verdict).toBe("denied");
+      expect(settled.timedOut).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a policy auto-deny is never marked as a timeout", async () => {
+    const broker = new InteractionBroker({ policy: () => "deny" });
+    const { verdict, timedOut } = await broker.gate("permission", "peer1", {});
+    expect(verdict).toBe("auto-deny");
+    expect(timedOut).toBeUndefined();
+  });
+
   it("carries a custom autoDeny decision on timeout", async () => {
     vi.useFakeTimers();
     try {
