@@ -469,20 +469,62 @@ export class QueryCache<K = unknown> {
   }
 }
 
-/** Deep structural equality for cache structural sharing. */
-export function structuralEqual(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true;
-  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => structuralEqual(v, b[i]));
+/** Past this nesting depth, treat values as different rather than recursing further. */
+const DEFAULT_MAX_DEPTH = 200;
+/**
+ * Past this many node-level comparisons (across the whole call, not per-level), treat
+ * values as different rather than continuing. Bounds cost for wide-but-shallow data the
+ * same way maxDepth bounds cost for deep data — a large payload shouldn't make every
+ * cache write pay unbounded O(n) (or, across a session's worth of growing writes,
+ * effectively O(n^2)) comparison cost. A full deep-equal on huge data is rarely useful
+ * for cache-invalidation purposes anyway: a caller that needs to force a refresh despite
+ * "equal" bytes can always invalidate explicitly.
+ */
+const DEFAULT_MAX_COMPARISONS = 50_000;
+
+export interface StructuralEqualOptions {
+  /** @default 200 */
+  maxDepth?: number;
+  /** @default 50_000 */
+  maxComparisons?: number;
+}
+
+/**
+ * Deep structural equality for cache structural sharing.
+ *
+ * Bounded on two axes so this can't stack-overflow or blow up write() cost on
+ * adversarial/huge input: `maxDepth` caps recursion depth (returns `false` — "assume
+ * different" — past the cap rather than recursing further), and `maxComparisons` caps
+ * total node visits across the whole call (also returns `false` past the cap). Both
+ * defaults are generous for realistic app data; pass options to override per call.
+ */
+export function structuralEqual(a: unknown, b: unknown, options: StructuralEqualOptions = {}): boolean {
+  const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+  const maxComparisons = options.maxComparisons ?? DEFAULT_MAX_COMPARISONS;
+  let comparisons = 0;
+
+  function eq(a: unknown, b: unknown, depth: number): boolean {
+    // Count every visit (even ones the Object.is fast path resolves immediately) so a
+    // wide-but-shallow structure with many equal leaves is bounded too, not just deep ones.
+    if (++comparisons > maxComparisons) return false;
+    if (Object.is(a, b)) return true;
+    // Bail before recursing further: keeps the actual call stack depth bounded by
+    // maxDepth regardless of how deeply nested the input is.
+    if (depth > maxDepth) return false;
+    if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+    if (Array.isArray(a) || Array.isArray(b)) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+      return a.every((v, i) => eq(v, b[i], depth + 1));
+    }
+    const ak = Object.keys(a as object);
+    const bk = Object.keys(b as object);
+    if (ak.length !== bk.length) return false;
+    return ak.every(
+      (k) =>
+        Object.prototype.hasOwnProperty.call(b, k) &&
+        eq((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], depth + 1),
+    );
   }
-  const ak = Object.keys(a as object);
-  const bk = Object.keys(b as object);
-  if (ak.length !== bk.length) return false;
-  return ak.every(
-    (k) =>
-      Object.prototype.hasOwnProperty.call(b, k) &&
-      structuralEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]),
-  );
+
+  return eq(a, b, 0);
 }

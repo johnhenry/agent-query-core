@@ -134,6 +134,66 @@ describe("structuralEqual", () => {
     expect(structuralEqual([1, 2], [2, 1])).toBe(false);
     expect(structuralEqual(null, {})).toBe(false);
   });
+
+  function deepObject(depth: number): unknown {
+    let node: unknown = { leaf: true };
+    for (let i = 0; i < depth; i++) node = { nested: node };
+    return node;
+  }
+
+  it("does not stack-overflow on very deeply nested equal data, and returns a sane result", () => {
+    const a = deepObject(5_000);
+    const b = deepObject(5_000);
+    // Identical objects would normally deep-equal, but past the depth cap the
+    // comparison bails out and reports "different" rather than crashing.
+    expect(() => structuralEqual(a, b)).not.toThrow();
+    expect(structuralEqual(a, b)).toBe(false);
+  });
+
+  it("does not stack-overflow on very deeply nested differing data", () => {
+    const a = deepObject(5_000);
+    const b = deepObject(5_000);
+    // Corrupt a value near the bottom of `b` so this would also be "different"
+    // under an unbounded comparison, just via a different code path.
+    let cursor = b as { nested?: unknown; leaf?: boolean };
+    while ("nested" in cursor) cursor = cursor.nested as typeof cursor;
+    cursor.leaf = false;
+    expect(() => structuralEqual(a, b)).not.toThrow();
+    expect(structuralEqual(a, b)).toBe(false);
+  });
+
+  it("still compares correctly for depth within the default cap", () => {
+    const a = deepObject(50);
+    const b = deepObject(50);
+    expect(structuralEqual(a, b)).toBe(true);
+    const c = deepObject(50) as { nested: { nested: unknown } };
+    c.nested.nested = { different: true };
+    expect(structuralEqual(a, c)).toBe(false);
+  });
+
+  it("respects a custom maxDepth", () => {
+    const a = deepObject(10);
+    const b = deepObject(10);
+    expect(structuralEqual(a, b, { maxDepth: 5 })).toBe(false);
+    expect(structuralEqual(a, b, { maxDepth: 20 })).toBe(true);
+  });
+
+  it("bails out past maxComparisons on wide-but-shallow data", () => {
+    const wide = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, i]));
+    const a = wide(1000);
+    const b = wide(1000);
+    expect(structuralEqual(a, b)).toBe(true); // within default cap
+    expect(structuralEqual(a, b, { maxComparisons: 10 })).toBe(false); // capped low
+  });
+
+  it("QueryCache.write() does not stack-overflow when writing deeply nested data repeatedly", () => {
+    const cache = new QueryCache<string>({ serializeKey: (k) => k });
+    const key = "deep";
+    for (let i = 0; i < 3; i++) {
+      expect(() => cache.write(key, deepObject(5_000))).not.toThrow();
+    }
+    expect(cache.getSnapshot(key)?.status).toBe("success");
+  });
 });
 
 describe("QueryCache edge cases", () => {
