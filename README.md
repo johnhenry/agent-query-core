@@ -1,5 +1,7 @@
 # @johnhenry/agent-query-core
 
+Full documentation: [opensource.johnhenry.me/agent-query](https://opensource.johnhenry.me/agent-query/)
+
 **The protocol-agnostic engine behind the `*-query` family of agent-protocol data layers.**
 
 [mcp-query](https://github.com/johnhenry/mcp-query) proved a shape: a reactive, cached,
