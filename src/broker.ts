@@ -116,13 +116,27 @@ export class InteractionBroker<D extends BaseDecision = BaseDecision> {
    * `"timeout"`, and the gate returns verdict `"denied"` with the `autoDeny`
    * decision (or `{ action: "deny", reason: "timeout" }`). Auto verdicts are
    * unaffected.
+   *
+   * ⏱ TIMEOUT IS NOT A DENIAL. Nobody answered — that is a different fact from
+   * a human declining, and it drives different recovery: retry elsewhere rather
+   * than record a refusal the person never made. Because a caller supplying
+   * `autoDeny` gets its OWN decision back on this path, `decision` alone cannot
+   * distinguish the two; adapters had to smuggle a sentinel through `autoDeny.reason`
+   * to tell them apart. `timedOut: true` is therefore set on, and only on, the
+   * expiry path. It is additive — existing callers that ignore it are unaffected,
+   * and `verdict` keeps its four values so exhaustive switches still compile.
    */
   async gate(
     type: string,
     peer: string,
     payload: unknown,
     opts: { phase?: InteractionPhase; manual?: boolean; autoApprove?: D; autoDeny?: D; timeoutMs?: number } = {},
-  ): Promise<{ verdict: "auto-allow" | "auto-deny" | "approved" | "denied"; decision: D }> {
+  ): Promise<{
+    verdict: "auto-allow" | "auto-deny" | "approved" | "denied";
+    decision: D;
+    /** True only when the human wait elapsed. Never set by a policy auto-deny. */
+    timedOut?: boolean;
+  }> {
     const verdict = await this.decide({ peer, type, payload });
     if (verdict === "deny") {
       this.record(peer, type, "auto-deny");
@@ -150,7 +164,11 @@ export class InteractionBroker<D extends BaseDecision = BaseDecision> {
       // Withdraw the now-moot interaction from the UI queue.
       if (this.pending.delete(queued.id)) this.bump();
       this.record(peer, type, "error", "timeout");
-      return { verdict: "denied", decision: opts.autoDeny ?? ({ action: "deny", reason: "timeout" } as D) };
+      return {
+        verdict: "denied",
+        decision: opts.autoDeny ?? ({ action: "deny", reason: "timeout" } as D),
+        timedOut: true,
+      };
     }
     const decision = raced;
     const outcome = decision.action === "approve" ? "approved" : "denied";
