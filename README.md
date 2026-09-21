@@ -1,5 +1,9 @@
 # @johnhenry/agent-query-core
 
+[![npm version](https://img.shields.io/npm/v/%40johnhenry%2Fagent-query-core.svg)](https://www.npmjs.com/package/@johnhenry/agent-query-core)
+[![CI](https://github.com/johnhenry/agent-query-core/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhenry/agent-query-core/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/%40johnhenry%2Fagent-query-core.svg)](https://www.npmjs.com/package/@johnhenry/agent-query-core)
+
 Full documentation: [opensource.johnhenry.me/agent-query](https://opensource.johnhenry.me/agent-query/)
 
 **The protocol-agnostic engine behind the `*-query` family of agent-protocol data layers.**
@@ -14,12 +18,8 @@ conventions, interaction types, transports).
 ## Install
 
 ```sh
-npm install @johnhenry/agent-query-core@rc
+npm install @johnhenry/agent-query-core
 ```
-
-This package has no stable release yet — always install with the `rc` tag. (The
-`latest` npm dist-tag is currently pinned to an older pre-release; `@rc` always
-points at the current release candidate.)
 
 ## Protocol versions
 
@@ -72,9 +72,9 @@ interceptor engine. For which spec versions each protocol adapter supports, see:
 
 | Protocol | Library | Status |
 |---|---|---|
-| MCP | [`@johnhenry/mcp-query`](https://github.com/johnhenry/mcp-query) | shipping (adopts core in a future major) |
-| A2A | [`@johnhenry/a2a-query`](https://github.com/johnhenry/a2a-query) | in development — first core consumer |
-| ACP | `@johnhenry/acp-query` | planned |
+| MCP | [`@johnhenry/mcp-query`](https://github.com/johnhenry/mcp-query) | published — core consumer |
+| A2A | [`@johnhenry/a2a-query`](https://github.com/johnhenry/a2a-query) | published — core consumer |
+| ACP | `@johnhenry/acp-query` | published — core consumer |
 | AP2 | a2a-query extension module | planned (verification/audit slice first) |
 
 MIT
