@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/%40johnhenry%2Fagent-query-core.svg)](https://www.npmjs.com/package/@johnhenry/agent-query-core)
 [![CI](https://github.com/johnhenry/agent-query-core/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhenry/agent-query-core/actions/workflows/ci.yml)
-[![license](https://img.shields.io/npm/l/%40johnhenry%2Fagent-query-core.svg)](https://www.npmjs.com/package/@johnhenry/agent-query-core)
+[![license](https://img.shields.io/npm/l/%40johnhenry%2Fagent-query-core.svg)](LICENSE)
 
 Full documentation: [opensource.johnhenry.me/agent-query](https://opensource.johnhenry.me/agent-query/)
 
