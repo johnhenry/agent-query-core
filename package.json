@@ -37,6 +37,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "prepare": "npm run build",
+    "examples": "for f in examples/[0-9]*.ts; do tsx \"$f\" || exit 1; done",
     "example:01": "tsx examples/01-cache-basics.ts",
     "example:02": "tsx examples/02-tags-and-invalidation.ts",
     "example:03": "tsx examples/03-optimistic-updates.ts",
