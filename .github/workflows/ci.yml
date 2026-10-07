@@ -17,3 +17,6 @@ jobs:
         npm run test:coverage
         npm run build
         node -e "import('./dist/index.js').then(m => { if (!m.QueryCache) throw new Error('missing QueryCache export'); console.log('ok'); })"
+
+  workflow-lint:
+    uses: johnhenry/workflows/.github/workflows/workflow-lint.yml@v1
