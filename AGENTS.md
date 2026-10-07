@@ -3,8 +3,8 @@
 `@johnhenry/agent-query-core` — the protocol-agnostic reactive cache /
 human-in-the-loop broker / interceptor / devtools engine shared by the
 `*-query` family (mcp-query, a2a-query, acp-query). Single package, Node
->= 22 (see [Repo-specific gotchas](#repo-specific-gotchas) on why this
-differs from the rest of the `@johnhenry` family), vitest (`npm test`),
+>= 26 (the family floor; see [Repo-specific gotchas](#repo-specific-gotchas)
+on moving it in lockstep with the consumers), vitest (`npm test`),
 builds to `dist/` via `tsc` (two entrypoints: `.` and `./react`). The
 library itself has zero runtime dependencies; React is an optional peer
 consumed only by `src/react/*`.
@@ -56,13 +56,11 @@ publish smoke step that imports the built `dist/index.js` and asserts
   Code that reasons about interceptor order (auth before timing, redaction
   last) must reason about it as nested `try`/`finally`, not sequential
   execution.
-- **`engines.node` is `>=22.0.0` here, not the family's `>=26.0.0` floor —
-  deliberate, not a gap.** `a2a-query`, `acp-query`, and `mcp-query` (this
-  package's only consumers) genuinely run Node 22 in CI; bumping the floor
-  here without bumping all four in lockstep would just make this package's
-  stated floor a lie. Don't "fix" this to `>=26` without first verifying
-  the whole `*-query` family on 26 and coordinating the bump across all
-  four repos.
+- **`engines.node` moves in lockstep across the `*-query` family.**
+  `a2a-query`, `acp-query`, and `mcp-query` are this package's only
+  consumers; all four went from `>=22.0.0` to the family's `>=26.0.0`
+  together (2026-10-07), with CI on 26 in each. Change the floor in one
+  without the other three and its stated floor stops being true.
 
 ## Definition of done
 
