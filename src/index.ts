@@ -34,8 +34,14 @@ export { persistCache } from "./persist.js";
 export type { PersistOptions, SyncStorage } from "./persist.js";
 export { instrumentTransport } from "./instrument.js";
 export type { TrafficDirection, TrafficEvent, TransportLike } from "./instrument.js";
-export { DevtoolsHub } from "./devtools.js";
-export type { DevtoolsEventBase, DevtoolsSink } from "./devtools.js";
+export {
+  DevtoolsHub,
+  DEVTOOLS_SCHEMA_VERSION,
+  toSerializableEvent,
+  parseDevtoolsSnapshot,
+  summarizeTraffic,
+} from "./devtools.js";
+export type { DevtoolsEventBase, DevtoolsSink, DevtoolsSnapshot, WireSummary } from "./devtools.js";
 export { StatusStore } from "./status.js";
 export type { ConnectivityState, PeerStatus, StatusStoreOptions } from "./status.js";
 export { withRetry } from "./retry.js";
