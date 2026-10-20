@@ -262,7 +262,46 @@ hub.emit({ type: "cache:write", detail: { key } });
 hub.events();          // readonly TEvent[] — oldest dropped past capacity
 hub.subscribe(fn);     // notified per emit; returns unsubscribe
 hub.getVersion();      // monotonic, bumped per emit — pairs with useVersioned in panels
+hub.snapshot();        // { version: 1, events: [...] } — JSON-safe, see below
 ```
+
+### Serialization schema (versioned)
+
+`hub.snapshot()` returns `{ version, events }` where `version` is
+`DEVTOOLS_SCHEMA_VERSION` (an integer, currently `1`) and every event is plain JSON:
+`bigint` becomes a decimal string, `Error` becomes `{ name, message }`, `Date` an ISO
+string, `Map` an entries array, `Set` a values array, functions/symbols/`undefined`
+are dropped, and cycles become `"[Circular]"`. Every event has a string `type`; the
+rest of the vocabulary is the adapter's. The live buffer is never mutated.
+
+```ts
+import { parseDevtoolsSnapshot, summarizeTraffic } from "@johnhenry/agent-query-core";
+const wire = JSON.stringify(hub.snapshot());
+parseDevtoolsSnapshot(wire); // validates shape; throws on a version it does not read
+
+// Bodyless wire log: no params / result / error text, only shape.
+hub.emit(summarizeTraffic({ dir: "out", message: { method: "tools/call", id: 3, params: {} } }));
+// -> { type: "wire", dir: "out", kind: "request", method: "tools/call", id: 3 }
+```
+
+`WireSummary` fields: `type: "wire"`, `dir: "in" | "out"`, `kind: "request" |
+"notification" | "response" | "error"`, optional `method`, `id`, numeric `errorCode`.
+
+**Versioning rule:** adding an optional field is not breaking. Removing or renaming a
+field, or changing a type, bumps `DEVTOOLS_SCHEMA_VERSION`; `parseDevtoolsSnapshot`
+rejects any version other than the one it was built for.
+
+## Browser bundle (`/browser`)
+
+`@johnhenry/agent-query-core/browser` is one self-contained, minified ES module (no
+imports, no React; the `./react` entry is not included) to vendor into a page.
+`npm run build` also writes an unminified `dist/browser/index.dev.js` and prints a size
+table. Sizes at 0.2.0:
+
+| build | raw | gzip | brotli |
+|---|---|---|---|
+| `dist/browser/index.js` (minified) | 13.6 kB | 4.9 kB | 4.4 kB |
+| `dist/browser/index.dev.js` | 30.5 kB | 8.8 kB | 7.8 kB |
 
 ## `MemoryCacheStore` / `CacheStore`
 

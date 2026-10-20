@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.2.0
+
+- **Versioned devtools schema** (johnhenry/agent-query-core#17):
+  `DEVTOOLS_SCHEMA_VERSION` (1), `DevtoolsHub#snapshot()`, `toSerializableEvent`,
+  `parseDevtoolsSnapshot`, and bodyless `summarizeTraffic` / `WireSummary`.
+  Documented in `docs/api.md`.
+- **Single-file browser ESM bundle**: `@johnhenry/agent-query-core/browser`
+  (`dist/browser/index.js`, ~4.9 kB gzip), built by `scripts/bundle.mjs` with esbuild.
+
 - **Node 26 is the floor** (`engines.node` `>=26.0.0`, CI and release on 26,
   `.nvmrc` 26), moved in lockstep across the `*-query` family
   (agent-query-core, a2a-query, acp-query, mcp-query), the family-wide
