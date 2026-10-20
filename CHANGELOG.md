@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.1
+
+- `./browser` export now declares `types` (`dist/index.d.ts`), so TypeScript consumers resolve declarations for the bundle (johnhenry/agent-query-core#19, follow-up to #18).
+
 ## 0.2.0
 
 - **Versioned devtools schema** (johnhenry/agent-query-core#17):
