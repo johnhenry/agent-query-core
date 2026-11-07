@@ -6,7 +6,7 @@ protocol's official low-level SDK — the TanStack-Query-of-X move. Building
 [a2a-query](https://github.com/johnhenry/a2a-query) revealed which parts of that shape
 are protocol-independent. This package is those parts, extracted: no wire code, no
 protocol vocabulary, no opinions about what a "resource" or a "task" is. An **adapter**
-(mcpq, a2aq, acpq, …) supplies the vocabulary; the core supplies the machinery.
+(mcp-query, a2a-query, acp-query, …) supplies the vocabulary; the core supplies the machinery.
 
 The contract between the two is deliberately narrow:
 
@@ -261,10 +261,10 @@ the adapter MUST do a full read of the affected resources and reconcile the cach
 against it. Never assume the gap was empty: the events you didn't receive are
 exactly the ones you can't know about. Per-adapter reality:
 
-- **mcpq** — relists: on reconnect it re-reads subscribed resources, so the cache
+- **mcp-query** — relists: on reconnect it re-reads subscribed resources, so the cache
   reconverges to server truth.
-- **a2aq** — polls, so it trivially reconciles: the next poll *is* the full read.
-- **acpq** — has no replay: ACP session streams cannot be resumed with history, so
+- **a2a-query** — polls, so it trivially reconciles: the next poll *is* the full read.
+- **acp-query** — has no replay: ACP session streams cannot be resumed with history, so
   a reconnect leaves session state gappy. Recovery is a fresh session or a
   re-prompt — the adapter must surface that honestly (mark the session degraded)
   rather than pretend the stream continued.

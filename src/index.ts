@@ -1,5 +1,5 @@
 // @johnhenry/agent-query-core — the protocol-agnostic engine behind the *-query
-// family of agent-protocol data layers (mcpq, a2aq, acpq, …). Adapters supply the
+// family of agent-protocol data layers (mcp-query, a2a-query, acp-query, …). Adapters supply the
 // protocol vocabulary (key kinds, tag conventions, interaction types, transports);
 // this package supplies the reactive machinery.
 
@@ -34,8 +34,14 @@ export { persistCache } from "./persist.js";
 export type { PersistOptions, SyncStorage } from "./persist.js";
 export { instrumentTransport } from "./instrument.js";
 export type { TrafficDirection, TrafficEvent, TransportLike } from "./instrument.js";
-export { DevtoolsHub } from "./devtools.js";
-export type { DevtoolsEventBase, DevtoolsSink } from "./devtools.js";
+export {
+  DevtoolsHub,
+  DEVTOOLS_SCHEMA_VERSION,
+  toSerializableEvent,
+  parseDevtoolsSnapshot,
+  summarizeTraffic,
+} from "./devtools.js";
+export type { DevtoolsEventBase, DevtoolsSink, DevtoolsSnapshot, WireSummary } from "./devtools.js";
 export { StatusStore } from "./status.js";
 export type { ConnectivityState, PeerStatus, StatusStoreOptions } from "./status.js";
 export { withRetry } from "./retry.js";
