@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.3.0 (2026-11-07)
+
+- `InteractionBroker#gate()` now returns `timedOut: true` when the human wait
+  (`timeoutMs`) elapses, and leaves it unset on a human deny or a policy
+  auto-deny. A caller passing `autoDeny` gets its own decision back on both
+  paths, so before this it could not tell "nobody answered" from "somebody
+  declined" without a sentinel in `autoDeny.reason`. Additive: `verdict` keeps
+  its four values (johnhenry/agent-query-core#5).
+
 ## 0.2.1
 
 - `./browser` export now declares `types` (`dist/index.d.ts`), so TypeScript consumers resolve declarations for the bundle (johnhenry/agent-query-core#19, follow-up to #18).
