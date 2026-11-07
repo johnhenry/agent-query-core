@@ -183,6 +183,8 @@ const { verdict, decision } = await broker.gate("permission", "agentA", params, 
   // phase?: "request" | "response";  manual?: boolean (human must AUTHOR the result)
 });
 // verdict: "auto-allow" | "auto-deny" | "approved" | "denied"
+// timedOut: true only on the expiry path (nobody answered), never on a human
+// deny or a policy auto-deny, so adapters can tell the two apart (0.3.0).
 ```
 
 ### Queue + reactive store (what a UI binds to)
